@@ -15,4 +15,6 @@ Since we are limited also by a 0.075% trading fee on the binance trading platfor
 Through backtesting I have found that making trades at a 5% fluctuation in the coin pair from when the held coin was first entered is most profitable. 
 Thus when in a coin, the program monitors all pairs (updating each second) with the held coin and buys a coin when [(the price of potential jump to coin)/(held coin)] - (transaction fees) is first greater than the value of this ratio, 
 when the current held coin was traded into, by at least 5%.
-I am also constantly trying different coin lists but stick to coins in the top 100 by market cap.
+
+I am also constantly trying different coin lists but stick to coins in the top 100 by market cap, as it is important for the coins to hold their value in the long term, if one is to make a fiat profit (the end goal)
+from this strategy.
