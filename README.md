@@ -1,6 +1,6 @@
 # Crypto-Trading-Bot
 Ever notice that when Bitcoin rallies so do the rest and when Bitcoins down your whole trading dashboard is red. 
-The only difference between most of the altcoins issue in the short run is the delays between them following each others previous move forward. 
+The only difference between most of the altcoins in the short run is the delays between them following each others previous move forward. 
 So instead of riding the wild market, this crypto bot looks at established coin pairs. When one coin drops 
 relative to another it buys the falling coin, under the assumption that it will catch up with the rising coin resulting in an increase in number of coins held.
 For example, take BTC price to be 60k and ETH price to be 4k (a ratio between their prices of 15), say BTC rallies up to 64k while ETH remains at 4k, the strategy 
