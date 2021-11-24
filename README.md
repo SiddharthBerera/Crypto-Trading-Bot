@@ -17,5 +17,5 @@ Through backtesting I have found that making trades at a 5% fluctuation in the c
 Thus when in a coin, the program monitors all pairs (updating each second) with the held coin and buys a coin when [(price of held coin)/(price of potential jump to coin)] - (transaction fees) is first greater than the value of the pair's ratio, 
 when the current held coin was traded into, by at least 5%.
 
-I am also constantly trying different coin lists but stick to always using around some combination of 20 coins from the top 100 by market cap, as it is important for the coins to hold their value in the long term, 
+I am also constantly trying different coin lists but stick to always using some combination of around 20 coins from the top 100 by market cap, as it is important for the coins to hold their value in the long term, 
 if one is to make a fiat profit (the end goal) from this strategy.
