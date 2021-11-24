@@ -8,7 +8,8 @@ For example, take the price of BTC to be $60k and the price of ETH to be $4k (a 
 assumes that ETH will now follow BTC, so if we buy 1 ETH currently worth 4/64 = 0.0625 BTC, then when 1 BTC is eventually worth 15 ETH again, we can swap from ETH to BTC.
 Our capital has gone from being worth 1/16 BTC = 0.0625 to 1/15 BTC = 0.0667. Assuming that BTC holds its value with respect to fiat currency in the long term, 
 we can keep trading off of these fluctuations in ratios between coins - this is known as a mean reversion strategy.
-The main parameters of the program are the percentage change in ratio at which we initiate the first trade and the coins on which we look for trades.
+
+The main parameters of the program are the percentage change in ratio at which we initiate a trade and the coins on which we look for trades.
 A low percentage of fluctuation will result in lots of trades very frequently each making a small amount of profit, while a larger percentage will produce fewer trades but each more profitable.
 Since we are limited also by a 0.075% trading fee on the binance trading platform we must also take this into account when deciding whether a coin pair could make a profitable trade based on this strategy.
 Through backtesting I have found that making trades at a 5% fluctuation in the coin pair from when the held coin was first entered is most profitable. 
