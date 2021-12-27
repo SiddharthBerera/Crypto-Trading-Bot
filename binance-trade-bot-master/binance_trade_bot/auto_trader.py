@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ class AutoTrader:
         self.db = database
         self.logger = logger
         self.config = config
+        self.failed_buy_order = False
 
     def initialize(self):
         self.initialize_trade_thresholds()
@@ -47,9 +48,11 @@ class AutoTrader:
                 price = result.cumulative_quote_qty / result.cumulative_filled_quantity
 
             self.update_trade_threshold(pair.to_coin, price)
+            self.failed_buy_order = False
             return result
 
         self.logger.info("Couldn't buy, going back to scouting mode...")
+        self.failed_buy_order = True
         return None
 
     def update_trade_threshold(self, coin: Coin, coin_price: float):
@@ -57,19 +60,25 @@ class AutoTrader:
         Update all the coins with the threshold of buying the current held coin
         """
 
-        if coin_price is None:
+        if coin_price is None or coin_price == 0.0:
             self.logger.info("Skipping update... current coin {} not found".format(coin + self.config.BRIDGE))
             return
 
         session: Session
         with self.db.db_session() as session:
             for pair in session.query(Pair).filter(Pair.to_coin == coin):
-                from_coin_price = self.manager.get_ticker_price(pair.from_coin + self.config.BRIDGE)
+                from_coin_price = self.manager.get_sell_price(pair.from_coin + self.config.BRIDGE)
 
                 if from_coin_price is None:
                     self.logger.info(
                         "Skipping update for coin {} not found".format(pair.from_coin + self.config.BRIDGE)
                     )
+                    continue
+                
+                # check if we hold above min_notional coins of from_coin. If so skip ratio update.
+                from_coin_balance = self.manager.get_currency_balance(pair.from_coin.symbol)          
+                min_notional = self.manager.get_min_notional(pair.from_coin.symbol, self.config.BRIDGE.symbol)
+                if from_coin_price * from_coin_balance > min_notional:
                     continue
 
                 pair.ratio = from_coin_price / coin_price
@@ -88,15 +97,15 @@ class AutoTrader:
             for from_coin_symbol, group in grouped_pairs.items():
                 self.logger.info(f"Initializing {from_coin_symbol} vs [{', '.join([p.to_coin.symbol for p in group])}]")
                 for pair in group:
-                    from_coin_price = self.manager.get_ticker_price(pair.from_coin + self.config.BRIDGE)
+                    from_coin_price = self.manager.get_sell_price(pair.from_coin + self.config.BRIDGE)
                     if from_coin_price is None:
                         self.logger.info(
                             "Skipping initializing {}, symbol not found".format(pair.from_coin + self.config.BRIDGE)
                         )
                         continue
 
-                    to_coin_price = self.manager.get_ticker_price(pair.to_coin + self.config.BRIDGE)
-                    if to_coin_price is None:
+                    to_coin_price = self.manager.get_buy_price(pair.to_coin + self.config.BRIDGE)
+                    if to_coin_price is None or to_coin_price == 0.0:
                         self.logger.info(
                             "Skipping initializing {}, symbol not found".format(pair.to_coin + self.config.BRIDGE)
                         )
@@ -110,7 +119,7 @@ class AutoTrader:
         """
         raise NotImplementedError()
 
-    def _get_ratios(self, coin: Coin, coin_price):
+    def _get_ratios(self, coin: Coin, coin_price, excluded_coins: List[Coin] = []):
         """
         Given a coin, get the current price ratio for every other enabled coin
         """
@@ -118,11 +127,16 @@ class AutoTrader:
         prices: Dict[str, float] = {}
 
         scout_logs = []
+        excluded_coin_symbols = [c.symbol for c in excluded_coins]
         for pair in self.db.get_pairs_from(coin):
-            optional_coin_price = self.manager.get_ticker_price(pair.to_coin + self.config.BRIDGE)
+            #skip excluded coins
+            if pair.to_coin.symbol in excluded_coin_symbols:
+                continue
+
+            optional_coin_price = self.manager.get_buy_price(pair.to_coin + self.config.BRIDGE)
             prices[pair.to_coin_id] = optional_coin_price
 
-            if optional_coin_price is None:
+            if optional_coin_price is None or optional_coin_price == 0.0:
                 self.logger.info(
                     "Skipping scouting... optional coin {} not found".format(pair.to_coin + self.config.BRIDGE)
                 )
@@ -133,21 +147,27 @@ class AutoTrader:
             # Obtain (current coin)/(optional coin)
             coin_opt_coin_ratio = coin_price / optional_coin_price
 
-            transaction_fee = self.manager.get_fee(pair.from_coin, self.config.BRIDGE, True) + self.manager.get_fee(
-                pair.to_coin, self.config.BRIDGE, False
-            )
+            # Fees
+            from_fee = self.manager.get_fee(pair.from_coin, self.config.BRIDGE, True)
+            to_fee = self.manager.get_fee(pair.to_coin, self.config.BRIDGE, False)
+            transaction_fee = from_fee + to_fee - from_fee * to_fee
 
-            ratio_dict[pair] = (
-                coin_opt_coin_ratio - transaction_fee * self.config.SCOUT_MULTIPLIER * coin_opt_coin_ratio
-            ) - pair.ratio
+            if self.config.USE_MARGIN == "yes":
+                ratio_dict[pair] = (
+                    (1 - transaction_fee) * coin_opt_coin_ratio / pair.ratio - 1 - self.config.SCOUT_MARGIN / 100
+                )
+            else:
+                ratio_dict[pair] = (
+                    coin_opt_coin_ratio - transaction_fee * self.config.SCOUT_MULTIPLIER * coin_opt_coin_ratio
+                ) - pair.ratio
         self.db.batch_log_scout(scout_logs)
         return (ratio_dict, prices)
 
-    def _jump_to_best_coin(self, coin: Coin, coin_price: float):
+    def _jump_to_best_coin(self, coin: Coin, coin_price: float, excluded_coins: List[Coin] = []):
         """
         Given a coin, search for a coin to jump to
         """
-        ratio_dict, prices = self._get_ratios(coin, coin_price)
+        ratio_dict, prices = self._get_ratios(coin, coin_price, excluded_coins)
 
         # keep only ratios bigger than zero
         ratio_dict = {k: v for k, v in ratio_dict.items() if v > 0}
@@ -165,7 +185,7 @@ class AutoTrader:
         bridge_balance = self.manager.get_currency_balance(self.config.BRIDGE.symbol)
 
         for coin in self.db.get_coins():
-            current_coin_price = self.manager.get_ticker_price(coin + self.config.BRIDGE)
+            current_coin_price = self.manager.get_sell_price(coin + self.config.BRIDGE)
 
             if current_coin_price is None:
                 continue
@@ -176,11 +196,14 @@ class AutoTrader:
                 if bridge_balance > self.manager.get_min_notional(coin.symbol, self.config.BRIDGE.symbol):
                     self.logger.info(f"Will be purchasing {coin} using bridge coin")
                     result = self.manager.buy_alt(
-                        coin, self.config.BRIDGE, self.manager.get_ticker_price(coin + self.config.BRIDGE)
+                        coin, self.config.BRIDGE, self.manager.get_sell_price(coin + self.config.BRIDGE)
                     )
                     if result is not None:
                         self.db.set_current_coin(coin)
+                        self.failed_buy_order = False
                         return coin
+                    else:
+                        self.failed_buy_order = True
         return None
 
     def update_values(self):
@@ -189,13 +212,13 @@ class AutoTrader:
         """
         now = datetime.now()
 
-        coins = self.db.get_coins(False)
+        coins = self.db.get_coins(True)
         cv_batch = []
         for coin in coins:
             balance = self.manager.get_currency_balance(coin.symbol)
             if balance == 0:
                 continue
-            usd_value = self.manager.get_ticker_price(coin + "USDT")
+            usd_value = self.manager.get_ticker_price(coin + self.config.BRIDGE_SYMBOL)
             btc_value = self.manager.get_ticker_price(coin + "BTC")
             cv = CoinValue(coin, balance, usd_value, btc_value, datetime=now)
             cv_batch.append(cv)
